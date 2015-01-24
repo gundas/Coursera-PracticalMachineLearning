@@ -1,0 +1,147 @@
+---
+title: "Practical Machine Learning homework"
+author: "G. Vilkelis"
+date: "Friday, January 23, 2015"
+output: html_document
+---
+
+# Introduction
+
+
+The goal of this work is to build a prediction model which would be able to identify if a person is doing an exercise correctly, or is he making some kind of mistake. The data is taken from the sensors which are attached to a person's body.
+
+The background information about the data and the collection method can be obtained at:
+[http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har)
+
+
+# Model preparation
+
+
+## Training data analysis and preparation
+
+The data was downloaded in 23rd of January from the following URL:
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+
+```{r}
+# read original dataset
+rawData <- read.table('pml-training.csv', header=T, sep=',', stringsAsFactors = F )
+dim(rawData)
+```
+
+The original data set contains 159 features (and one response variable called "classe").
+
+To clean and prepare the data I've applied the modifications below:
+
+```{r}
+# get rid of the non interesting features: - index, user_name, raw_timestamp_part_1, raw_timestamp_part_2, 
+# cvtd_timestamp and num_window
+data <- rawData[,-c(1,2,3,4,5, 7)]
+
+#suppress NA introduction warnings - they are expected
+suppressWarnings(
+  # transformations - some number values are quated, some are invalid (e.g. "#DIV/0!"). Convert everthing
+  # what is not "new_window"(first column) and "classe" (last column) to numbers:
+  data[,-c(1,154)] <- sapply(data[,-c(1,154)], as.numeric)
+)
+
+
+# make "new_window" and "classe" a factor
+data$new_window <- as.factor(data$new_window)
+data$classe <- as.factor(data$classe)
+
+```
+
+## Dealing  with NA values
+
+The dataset contains a number of NA values:
+```{r}
+# number of rows with no NA values
+sum(complete.cases(data))
+
+# number of columns with at least on NA value
+sum(sapply(names(data), function(x) any(is.na(data[,x]))))
+
+
+```
+
+As one can see above, every observation (row) contains at least one NA value and there are 100 features (columns) which contain at least one NA value.
+
+Due to the time constrains I've decided not to impute/analyze the NA values (some of the values do depend on the new_window feature), but first try to use an algorithm which can deal with NA values - the classification tree implementation "rpart".
+
+
+## Model Selection
+
+First, I will train rpart classification tree, using 5-fold cross validation:
+```{r}
+library(caret)
+
+# use 5-fold CV
+fitControl <- trainControl(## 5-fold CV
+  method = "cv",
+  number = 5)
+# rpart fit
+fit.rpart <- train(t$class ~ ., method='rpart', data=t[,-154], na.action = na.pass, trControl = fitControl)
+
+fit.rpart 
+```
+
+As we can see, the accuracy of rpart is terrible - around 51%.
+However, we can take the most important features (as reported by rpart) and try to fit a more sophisticated ensemble of  classification trees - a Random Forest.
+
+Below are the most important features as reported by rpart:
+```{r}
+varImp(fit.rpart)
+```
+
+I will take the features which importance is greater than 0 (there are 14 of those), and train Random Forest only with those features.
+I will use 5-fold cross validation to estimate out-of-sample accuracy of the model:
+
+```{r}
+# 14 most important variables
+features <- rownames(varImp(fit.rpart)$importance)[varImp(fit.rpart)$importance > 0]
+
+fit.rf <- train(data$class ~ ., method='rf', data=data[,features], trControl = fitControl)
+
+```
+
+The Random Forest reported out-of-sample accuracy is much better - around 99%:
+
+```{r}
+fit.rf
+
+```
+
+I think this accuracy is good enough to apply the selected model on the test data set.
+
+# Model application on the Test data
+
+I will apply the fitted Random Forest model using only 14 selected features on the test data set.
+
+First, I will load the test data set and apply the same transformations which were applied to the training set:
+
+```{r}
+# read the test  dataset
+rawTest<- read.table('pml-testing.csv', header=T, sep=',', stringsAsFactors = F )
+
+# get rid of the non interesting features: - index, user_name, raw_timestamp_part_1, raw_timestamp_part_2, 
+# cvtd_timestamp and num_window
+# the first 5
+test <- rawTest[,-c(1,2,3,4,5, 7)]
+
+# transformations - some number values are quated, some are invalid (e.g. "#DIV/0!"). Convert everthing
+# what is not "new_window","num_window" (first 2 columns) and "classe" (last column) to numbers:
+test[,-c(1,2,154)] <- sapply(test[,-c(1,2,154)], as.numeric)
+
+# make "new_window" and "classe" a factor
+test$new_window <- as.factor(test$new_window)
+```
+
+And get the predictions:
+```{r}
+answers.test <- predict(fit.rf, test)
+answers.test
+```
+
+The predictions on test data were 100% accurate.
+
